@@ -1,0 +1,54 @@
+{
+  "teams": [
+    "A",
+    "B",
+    "C",
+    "D"
+  ],
+  "fixtures": [
+    {
+      "id": "m1",
+      "home": "A",
+      "away": "B"
+    },
+    {
+      "id": "m2",
+      "home": "B",
+      "away": "C"
+    },
+    {
+      "id": "m3",
+      "home": "C",
+      "away": "A"
+    },
+    {
+      "id": "m4",
+      "home": "D",
+      "away": "A"
+    }
+  ],
+  "results": [
+    {
+      "fixture": "m1",
+      "home_goals": 2,
+      "away_goals": 0
+    },
+    {
+      "fixture": "m2",
+      "home_goals": 1,
+      "away_goals": 1
+    },
+    {
+      "fixture": "m3",
+      "home_goals": 1,
+      "away_goals": 0
+    }
+  ],
+  "deductions": [
+    {
+      "team": "A",
+      "points": 1,
+      "reason": "synthetic rule breach"
+    }
+  ]
+}
