@@ -104,3 +104,130 @@ neighbour set N(S) form a directly checkable Hall violation; the algorithm repor
 exactly that. A feasible instance is conversely certified by the complete matching whose
 existence the maximum matching establishes. Both directions are verified against brute
 force enumeration on all small bipartite graphs in the test suite.
+
+# League history store (league-history, independent report envelope)
+
+`league-history` is a standalone offline SQLite store for corrections and
+withdrawals of results that already carry an explicit fixture identity.  It
+does **not** consume observation files and never changes the standings,
+points, deduction or competition-rank rules: every timeline segment reuses
+the original `league_table.standings.calculate`.  Its report envelope
+(`schema_version=1`, `store_id`, `source_sha256`, `knowledge_seq`) is
+independent of the league-table v1/v2 envelopes.
+
+## Business time and knowledge time
+
+Two time axes are kept separate.
+
+* **Business time** is an integer in `0..1000000000`; booleans are rejected.
+  Every interval is half-open `[left, right)`. A null `right` means
+  `+infinity`.  Results from the init source hold from business time 0; a
+  fixture without an init result is **pending** (never 0:0).
+* **Knowledge time** is a strictly increasing sequence `1,2,...` assigned to
+  each successfully committed batch; sequence 0 is the frozen init snapshot.
+  `query --as-of K` sees only batches whose sequence is `<= K`, so later
+  corrections can never pollute an older knowledge view.
+
+## CLI
+
+```
+league-history init  --source FILE --db DB --output REPORT
+league-history apply   --db DB --batch FILE --output REPORT
+league-history query   --db DB --as-of K --from L --to R --output REPORT
+```
+
+* `init` parses the same strict source contract as league-table, then freezes
+  teams, fixtures, deductions and the initial results into a brand-new SQLite
+  database and generates a stable `store_id`. It never overwrites an existing
+  database and a failure leaves no half store at the target path.
+* `apply` validates and commits one batch; `query` opens the database
+  read-only, performs no dedup/sequence change and cannot write it.  Neither
+  `apply` nor `query` creates a missing database; only a compatible store
+  (matching application id, schema version and meta) is accepted.
+* `R` is an integer or the string `inf` (infinite right bound); `null` is not
+  accepted.  `L` and a finite `R` lie in `0..1000000000` with `L < R`; an
+  empty window is an error.  `K` is an integer in `0..current sequence`; a
+  sequence above the current one errors.  Times, sequences and goals all
+  reject booleans.
+* All three commands exit 0 on success and 2 on any parse, validation or
+  storage error, preserving the database and any previous report.  The DB,
+  report and every JSON input path must be distinct even after resolving
+  symlinks/aliases; a query report can never overwrite the database.  Report
+  publication reuses the original atomic `save` (temp file + `os.replace`,
+  symlink outputs rejected).  The database and report are not cross-file
+  atomic: if a report write fails after commit, replaying the same batch
+  returns its original sequence without new writes.
+
+## Batch file format
+
+Strict JSON with the same 8 MB, duplicate-key, unknown-field, non-finite
+number and identifier rules as every other JSON input:
+
+```json
+{"batch_id":"b1","operations":[
+  {"fixture":"m","left":10,"right":30,"expected":[2,0],"replacement":[0,1]},
+  {"fixture":"m","left":20,"right":25,"expected":[0,1],"replacement":null}
+]}
+```
+
+* `batch_id` is a nonblank identifier (<=128 chars).  A batch has 1..1000
+  operations; the store holds at most 20000 operations in total.
+* Each operation names a frozen `fixture`, a finite `left`, a `right` that is
+  an integer strictly greater than `left` or null, an `expected` value and a
+  `replacement` value.  A value is either null or a two-element integer array
+  `[home_goals, away_goals]` with each goal in `0..1000`.
+* `expected` must equal the value present over the **whole** `[left,right)`
+  range in the batch-private working state, including every internal
+  sub-segment and any pending hole; checking only endpoints, single instants
+  or the latest record is forbidden.  `expected=null` requires the entire
+  range to be pending.
+* On success only `[left,right)` becomes `replacement`; material outside the
+  range and earlier knowledge history are untouched.  `replacement=null`
+  withdraws the range back to pending, it does not record 0:0.
+* Operations run in file order on the batch-private working state: a later
+  operation sees intervals produced by earlier ones in the same batch.  If any
+  precondition fails, the whole batch fails and no fact, sequence or dedup
+  registration changes (single transaction).
+
+## Idempotent replay and concurrent commits
+
+A batch's canonical business content is the fully parsed `batch_id` and
+`operations` values in their array order, ignoring object key order and JSON
+whitespace; the file path and byte digest are not part of it.  Replaying a
+known `batch_id` with identical canonical content returns its first sequence
+and writes nothing — the replay check happens before any `expected`
+verification, so it still succeeds after the current state has drifted.
+Reusing a known `batch_id` with different content errors; a failed batch id is
+not registered and remains available for corrected first-time content.
+
+All interval changes, history rows, batch identity and sequence commit in one
+IMMEDIATE SQLite transaction with a strictly increasing sequence.  Two
+processes committing conflicting ranges serialize on the write lock: at most
+one can satisfy its `expected` precondition against the same old value; the
+other re-checks against the post-commit current state and fails, leaving no
+partial batch or duplicate sequence.
+
+## Query timeline
+
+`query --as-of K --from L --to R` returns the maximal contiguous timeline
+inside `[L,R)` as known at sequence K.  Each segment is exactly
+`{"left":...,"right":...,"result":...}` where an infinite right bound is
+emitted as null and `result` is the full league-table standings object
+(including points, deductions, pending fixtures and competition rank).
+Neighboring segments are merged if and only if the complete `result` is equal;
+source operation boundaries inside an equal-result region never force a split.
+K=0 reproduces the init snapshot regardless of later batches.
+
+## Persistence model
+
+`results_rows` is bitemporal: each row carries a business interval
+(`left_time`,`right_time`) and a knowledge interval (`sys_from`,`sys_to`).
+Replacing a range in batch k closes each intersected current row as-is
+(`sys_to=k`, its business span is never mutated so historical queries stay
+exact) and inserts the replacement rows and surviving outside pieces with
+`sys_from=k`.  An as-of query selects rows with `sys_from<=K` and
+(`sys_to` null or `sys_to>K`).  The frozen schedule lives in `fixtures` and
+`deductions`; committed batches and their canonical content live in
+`batches`; `meta` holds `schema_version`, `store_id`, `source_sha256`,
+`knowledge_seq` and the running operation count.  Read-only connections never
+observe a half-applied batch.

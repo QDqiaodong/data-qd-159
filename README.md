@@ -27,7 +27,9 @@ python3 -m venv .venv
 同输入重跑不累加。测试使用临时目录，运行产物在忽略的run/。
 
 src/league_table/model.py 为业务模型，相关算法模块独立组织；common.py 提供受限JSON及报告发布，
-reconciliation.py 实现可审计赛果观测对账，cli.py 衔接数据链路。fixtures 为明确自制样例，代码与样例采用MIT许可。
+reconciliation.py 实现可审计赛果观测对账，cli.py 衔接数据链路。src/league_history 为离线赛果
+历史仓：timeline.py 是纯区间引擎，payloads.py 严格校验批次并生成规范内容，store.py 负责
+SQLite 双时态持久化与单事务提交，cli.py 提供 init/apply/query。fixtures 为明确自制样例，代码与样例采用MIT许可。
 
 ## 业务与样例
 
@@ -61,3 +63,37 @@ status="infeasible"、不导入任何观测、result 保持该 source 的基线�
 对账模式报告 schema_version=2，保留 source_sha256 与 result，增加按观测文件原始字节
 计算的 observations_sha256 及 reconciliation；不带 --observations 时仍是 schema_version=1
 的旧包络。字段、边界与全局可行性/证书正确性说明见 [数据契约](docs/contract.md)。
+
+## 离线赛果历史仓 league-history（init/apply/query）
+
+`league-history` 是可独立使用的本地 SQLite 历史仓，面向已有明确 fixture 身份的赛果
+更正与撤回；它不接观测文件，也不改变积分、扣分、pending 与 competition rank 规则，
+每个时间段直接复用原 `league_table.standings.calculate`。业务时刻为 0..1000000000
+整数（拒绝 bool），区间一律 `[left,right)`，`right=null` 表示正无穷；知识序号
+1,2,... 严格递增，0 表示 init 冻结快照。
+
+```sh
+.venv/bin/league-history init --source fixtures/history-source.json \
+  --db run/history.db --output run/h-init.json
+# 批1：[10,30) 2:0 改 0:1；[20,25) 撤回为 pending
+.venv/bin/league-history apply --db run/history.db \
+  --batch fixtures/history-batch1.json --output run/h-b1.json
+# 回看知识序号1、业务窗口[0,40)：2:0 / 0:1 / pending / 0:1 / 2:0 五段
+.venv/bin/league-history query --db run/history.db --as-of 1 \
+  --from 0 --to 40 --output run/h-q1.json
+# 无限右界用字符串 inf；k=0 重现 init 当时所见
+.venv/bin/league-history query --db run/history.db --as-of 0 \
+  --from 0 --to inf --output run/h-q0.json
+# 该批因 [20,25) 内部 pending 洞被整批拒绝（退出2，仓内无变化）
+.venv/bin/league-history apply --db run/history.db \
+  --batch fixtures/history-batch2-rejected.json --output run/h-b2.json
+```
+
+每条操作要求 `expected` 等于该 fixture 在整个区间（含全部内部子段与 pending 空洞）的
+现值；`replacement=null` 撤回为 pending 而非 0:0。批内操作按文件顺序在批次私有工作态
+执行，任一条失败则整批回滚。同一 `batch_id` 重放同一规范业务内容（忽略键次序与空白、
+保留 operations 次序）返回首次序号且无新增写入，重放先于 expected 校验；同 ID 异内容
+报错。所有区间变更、历史与序号在单事务提交，两个进程竞争同一旧区间时至多一个成功。
+报告包络为独立的 `schema_version=1`，含 `store_id`、`source_sha256`、`knowledge_seq`，
+query 另含精确为 `{left,right,result}` 的 `timeline`，无限右界输出 null。完整 CLI、
+批次格式、双时态持久化与并发语义见 [数据契约](docs/contract.md)。
