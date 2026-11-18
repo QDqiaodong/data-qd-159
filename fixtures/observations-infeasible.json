@@ -1,0 +1,24 @@
+{
+  "observations": [
+    {
+      "id": "o1",
+      "side_a": "A",
+      "side_b": "B",
+      "a_goals": 2,
+      "b_goals": 0,
+      "candidates": [
+        "m1"
+      ]
+    },
+    {
+      "id": "o2",
+      "side_a": "A",
+      "side_b": "B",
+      "a_goals": 2,
+      "b_goals": 0,
+      "candidates": [
+        "m1"
+      ]
+    }
+  ]
+}

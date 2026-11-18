@@ -1,7 +1,7 @@
 from .common import require,ident,rows,number
 from .standings import calculate
 
-def analyze(data):
+def parse(data):
     require(data,'teams fixtures results deductions');teams=[ident(t) for t in rows(data['teams'],200)]
     if not teams or len(set(teams))!=len(teams):raise ValueError('nonempty unique teams required')
     fixtures={};results={};deductions={}
@@ -17,4 +17,7 @@ def analyze(data):
         require(d,'team points reason');team=ident(d['team']);ident(d['reason'])
         if team not in teams or team in deductions:raise ValueError('duplicate or unknown deduction')
         deductions[team]=number(d['points'],0,1000)
-    return calculate(teams,fixtures,results,deductions)
+    return teams,fixtures,results,deductions
+
+def analyze(data):
+    return calculate(*parse(data))

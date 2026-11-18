@@ -1,0 +1,15 @@
+{
+  "observations": [
+    {
+      "id": "o1",
+      "side_a": "A",
+      "side_b": "B",
+      "a_goals": 1,
+      "b_goals": 1,
+      "candidates": [
+        "m1",
+        "m2"
+      ]
+    }
+  ]
+}
