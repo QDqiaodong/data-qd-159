@@ -324,3 +324,128 @@ exact) and inserts the replacement rows and surviving outside pieces with
 `batches`; `meta` holds `schema_version`, `store_id`, `source_sha256`,
 `knowledge_seq` and the running operation count.  Read-only connections never
 observe a half-applied batch.
+
+# Venue capacity audit (league-venue-audit, independent report envelope)
+
+`league-venue-audit --source FILE --schedule FILE --output REPORT` audits
+bookings of already-scheduled, not-yet-played fixtures against venue
+capacity.  It is a standalone offline command: it never changes the source
+snapshot and its report envelope (`schema_version=1`, `source_sha256`,
+`schedule_sha256`, ...) is independent of the league-table and history
+envelopes.  Overload is a business finding and exits 0; only malformed input
+exits 2.
+
+## Inputs
+
+The `--source` file is the original trusted league snapshot under the same
+strict contract as league-table (unique teams/fixtures, formal `results`,
+deductions; duplicate keys, unknown fields and non-finite numbers rejected).
+The independent `--schedule` file is strict JSON with the same 8 MB,
+duplicate-key and identifier rules and exactly three top-level arrays, each
+holding at most 20 000 records and possibly empty:
+
+* `venues` — `{"id","capacity"}`; venue ids are unique and `capacity` is the
+  default capacity, an integer 0..1000 (booleans rejected).
+* `limits` — `{"venue","start","end","capacity"}` referencing a known venue.
+  Restrictions may overlap or be identical and are never order-overriding;
+  the effective capacity on any minute is the minimum of the default and
+  every active limit.  Capacity 0 closes the venue.  Minutes are plain
+  integers in 0..1000000000 with `start < end`.
+* `bookings` — `{"fixture","venue","start","end","units"}` referencing a
+  known venue and a fixture that exists in the source snapshot and has **no
+  formal result**; each fixture carries at most one booking.  `units` is an
+  integer 1..1000 (booleans rejected).  A pending fixture without a booking
+  remains legal input and is reported as unscheduled.
+
+All intervals are half-open `[start, end)`: a limit or booking starting or
+ending at minute `t` first applies at minute `t` and no longer applies at
+minute `t`.  Overlapping bookings and booking demand above effective
+capacity are audited business facts, not validation errors.
+
+## Report
+
+```json
+{"schema_version": 1,
+ "source_sha256": "<sha256 of the source file bytes>",
+ "schedule_sha256": "<sha256 of the schedule file bytes>",
+ "excess_unit_minutes": 10,
+ "overloads": [
+   {"venue": "v1", "start": 2, "end": 3, "capacity": 3, "load": 4}],
+ "booking_relief": [
+   {"fixture": "m2", "relief_unit_minutes": 9}],
+ "unscheduled_fixtures": ["m4"]}
+```
+
+* `excess_unit_minutes` — plan-wide sum, over every minute, of the positive
+  difference between total active load and effective capacity; zero when no
+  minute is overloaded.
+* `overloads` — the maximal contiguous periods, per venue, on which both
+  capacity and load are unchanged and the load exceeds capacity, as
+  `{venue,start,end,capacity,load}`.  A boundary where only the limit source
+  or booking membership changes while capacity and load stay equal never
+  splits a period.  Sorted by venue id and then start minute.
+* `booking_relief` — one row per booking, including zero relief, sorted by
+  fixture id.  `relief_unit_minutes` is the amount by which the plan-wide
+  excess unit-minutes fall when **that single booking** is removed; capacity
+  and every other booking are untouched.  Every value is measured against the
+  same original plan, so rows cannot be added or read as the effect of a
+  joint cancellation.
+* `unscheduled_fixtures` — fixture ids with neither a booking nor a formal
+  result, ascending.
+
+Each input file keeps its own byte-faithful digest.  The output must differ
+from both inputs after path resolution, symlink outputs are rejected, and
+publication reuses the atomic temp-file + `os.replace` publisher: any parse,
+validation or computation failure exits 2 and leaves a previous report
+exactly in place.
+
+## Worked example
+
+Default capacity 3; limits `[3,7)` capacity 2 and `[5,9)` capacity 1; two
+bookings `[0,8)` and `[2,6)`, each 2 units.  The effective profile is
+
+| minutes | capacity | load | excess per minute |
+| --- | --- | --- | --- |
+| [0,2) | 3 | 2 | 0 |
+| [2,3) | 3 | 4 | 1 |
+| [3,5) | 2 | 4 | 2 |
+| [5,6) | 1 | 4 | 3 |
+| [6,8) | 1 | 2 | 1 |
+| [8,9) | 1 | 0 | 0 |
+
+so the total is 1 + 2·2 + 3 + 2·1 = 10 excess unit-minutes and the four
+overload periods are `[2,3) (3,4)`, `[3,5) (2,4)`, `[5,6) (1,4)` and
+`[6,8) (1,2)`.  Cancelling the long booking removes 1 + 4 + 3 + 1 = 9;
+cancelling the short one removes 1 + 4 + 2 = 7.
+
+## Why the results are exact, and the complexity bound
+
+Records are grouped by venue and all limit/booking endpoints form one sorted
+sweep.  At most O(N) constant-state segments exist because every segment
+begins at an endpoint, and the minute axis is never materialized.  The
+effective capacity is the minimum of the default capacity and the active
+limits, maintained as a min-heap with explicit per-limit retirement tokens:
+a lazy "pop expired top" rule alone is unsound because an expired
+high-capacity entry can hide under an active low-capacity top, so each
+limit's unique token is marked retired at its end and discarded when it
+reaches the heap top.  Load is a running sum updated only at booking
+endpoints.
+
+For per-booking relief, an overloaded segment of length `d`, capacity `c`,
+load `L` and excess `e = L-c` contributes `d·min(u, e)` when a booking of
+`u` units is removed.  Splitting the active unit classes `1..L` at `e`
+
+* adds `d` to a Fenwick tree over classes `1..e`, and
+* adds `d·e` to a second Fenwick tree over classes `e+1..L`,
+
+so two O(log 1000) point queries answer `relief(u) = minutes(u)·u + flat(u)`
+for any booking size.  Each booking takes a snapshot pair at its start and
+compares it at its end; the plan is never recomputed per booking and no
+segment scans its active bookings.  The identity is cross-checked against an
+independent minute-grid brute force on hundreds of randomized instances in
+the test suite.
+
+With `N` total records across both input files: sorting and the heap/BIT
+operations take O(N log N) ⊂ O(N log²(2+N)) worst-case time; auxiliary space
+and the number of report entries are both O(N).  Integer arithmetic covers
+spans up to 10⁹ minutes and loads up to 20 000·1000 units without overflow.

@@ -10,3 +10,5 @@
 - `history-source.json`：历史仓 init 源快照，A 主场对 B 的 m 赛果 2:0。
 - `history-batch1.json`：历史仓验收批 1，先在 [10,30) 改 2:0 为 0:1，再在 [20,25) 撤回为 pending。
 - `history-batch2-rejected.json`：在 [15,28) 以两端均为 0:1 的 expected 改 1:1，因内部 pending 洞被整批拒绝。
+- `venue-audit-source.json`：场地容量审计源快照，m1 已完赛，m2/m3/m4 待赛。
+- `venue-audit-schedule.json`：验收排期，单场地默认容量 3，限制 [3,7)=2、[5,9)=1，预订 m2[0,8) 与 m3[2,6) 各 2 单位；超限总量 10，单独撤销减量 9 与 7。

@@ -17,6 +17,8 @@ python3 -m venv .venv
   --observations fixtures/observations.json --output run/reconciliation.json
 .venv/bin/league-table --source fixtures/input-tiebreak.json \
   --tie-break-profile fixtures/tie-break-profile.json --output run/tiebreak.json
+.venv/bin/league-venue-audit --source fixtures/venue-audit-source.json \
+  --schedule fixtures/venue-audit-schedule.json --output run/venue-audit.json
 .venv/bin/python -m unittest discover -s tests -v
 ```
 
@@ -31,7 +33,10 @@ python3 -m venv .venv
 src/league_table/model.py 为业务模型，相关算法模块独立组织；common.py 提供受限JSON及报告发布，
 reconciliation.py 实现可审计赛果观测对账，cli.py 衔接数据链路。src/league_history 为离线赛果
 历史仓：timeline.py 是纯区间引擎，payloads.py 严格校验批次并生成规范内容，store.py 负责
-SQLite 双时态持久化与单事务提交，cli.py 提供 init/apply/query。fixtures 为明确自制样例，代码与样例采用MIT许可。
+SQLite 双时态持久化与单事务提交，cli.py 提供 init/apply/query。src/league_venue_audit 为
+场地容量审计：audit.py 是端点扫描线（最小堆维护有效容量、双 Fenwick 树一次扫描给出每笔
+预订的撤销减量），payloads.py 严格校验独立排期 JSON，cli.py 提供 league-venue-audit。
+fixtures 为明确自制样例，代码与样例采用MIT许可。
 
 ## 业务与样例
 
@@ -131,3 +136,34 @@ criterion_values，以及按最终排名排列的 subgroups；无并列组时 no
 报告包络为独立的 `schema_version=1`，含 `store_id`、`source_sha256`、`knowledge_seq`，
 query 另含精确为 `{left,right,result}` 的 `timeline`，无限右界输出 null。完整 CLI、
 批次格式、双时态持久化与并发语义见 [数据契约](docs/contract.md)。
+
+## 场地容量审计 league-venue-audit
+
+赛程发布前核对既定预订是否超过场地可用容量，并量化单独撤销每笔预订能缓解多少超限。
+排期文件只含 `venues`/`limits`/`bookings` 三个数组（各至多 20000 项、允许为空）：
+场地默认容量 0..1000；限制引用已知场地、可重叠可相同、容量 0 表示关闭，有效容量恒为
+默认容量与所有生效限制的最小值；预订引用已知场地和原快照中**无正式赛果**的 fixture，
+每个 fixture 至多一笔，未预订的待赛场次列为 `unscheduled_fixtures`。分钟为
+0..1000000000 的整数且 `start < end`，布尔值一律拒绝。
+
+整数半开时段 `[start,end)` 内，占用为该场地所有生效预订的单位数之和；每分钟超限量为
+占用超过有效容量的正差，`excess_unit_minutes` 是其按时长的全计划总和。`overloads` 报告
+同一场地容量与占用均不变且持续超限的最大连续时段，仅限制来源或占用成员变化但容量、占用
+均未变化时不切段，按场地 ID、开始分钟升序。`booking_relief` 含每笔预订（含减量 0），
+为只移除该预订占用（容量与其他预订不变）后整份计划减少的超限单位分钟；各笔减量相对同一
+原计划，不能相互累加解释成联合撤销。
+
+```sh
+# 验收样例：默认容量3，限制[3,7)=2、[5,9)=1，两笔各2单位预订[0,8)、[2,6)
+# 超限总量10；单独撤销两笔减量分别为9、7；四段 (3,4)(2,4)(1,4)(1,2)
+.venv/bin/league-venue-audit --source fixtures/venue-audit-source.json \
+  --schedule fixtures/venue-audit-schedule.json --output run/venue-audit.json
+```
+
+生产计算不展开逐分钟状态，也不逐段扫描活跃预订或逐笔重算计划：所有限制/预订端点合并为
+一次 O(N log N) 扫描，最小堆（带显式退役标记）维护有效容量、双 Fenwick 树在单位轴
+1..1000 上以 O(log 1000) 区间累加同时回答所有预订的减量快照；最坏时间
+O(N log²(2+N))、额外空间与报告条目 O(N)。超限是业务事实退出 0；无效输入退出 2 并复用
+原原子发布保留旧报告，输出不得与任一输入同路径、符号链接拒绝。算法恒等式在测试中由独立
+逐分钟暴力实现对数百组随机实例交叉验证。完整字段、正确性论证与复杂度见
+[数据契约](docs/contract.md)。

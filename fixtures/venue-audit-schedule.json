@@ -1,0 +1,38 @@
+{
+  "venues": [
+    {
+      "id": "v1",
+      "capacity": 3
+    }
+  ],
+  "limits": [
+    {
+      "venue": "v1",
+      "start": 3,
+      "end": 7,
+      "capacity": 2
+    },
+    {
+      "venue": "v1",
+      "start": 5,
+      "end": 9,
+      "capacity": 1
+    }
+  ],
+  "bookings": [
+    {
+      "fixture": "m2",
+      "venue": "v1",
+      "start": 0,
+      "end": 8,
+      "units": 2
+    },
+    {
+      "fixture": "m3",
+      "venue": "v1",
+      "start": 2,
+      "end": 6,
+      "units": 2
+    }
+  ]
+}

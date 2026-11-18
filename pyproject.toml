@@ -10,5 +10,6 @@ dependencies = []
 [project.scripts]
 league-table = "league_table.cli:main"
 league-history = "league_history.cli:main"
+league-venue-audit = "league_venue_audit.cli:main"
 [tool.setuptools.packages.find]
 where = ["src"]
