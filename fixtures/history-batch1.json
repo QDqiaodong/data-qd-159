@@ -1,0 +1,19 @@
+{
+  "batch_id": "b1",
+  "operations": [
+    {
+      "fixture": "m",
+      "left": 10,
+      "right": 30,
+      "expected": [2, 0],
+      "replacement": [0, 1]
+    },
+    {
+      "fixture": "m",
+      "left": 20,
+      "right": 25,
+      "expected": [0, 1],
+      "replacement": null
+    }
+  ]
+}

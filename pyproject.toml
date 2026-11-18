@@ -9,5 +9,6 @@ requires-python = ">=3.11"
 dependencies = []
 [project.scripts]
 league-table = "league_table.cli:main"
+league-history = "league_history.cli:main"
 [tool.setuptools.packages.find]
 where = ["src"]

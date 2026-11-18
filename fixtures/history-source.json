@@ -1,0 +1,21 @@
+{
+  "teams": [
+    "A",
+    "B"
+  ],
+  "fixtures": [
+    {
+      "id": "m",
+      "home": "A",
+      "away": "B"
+    }
+  ],
+  "results": [
+    {
+      "fixture": "m",
+      "home_goals": 2,
+      "away_goals": 0
+    }
+  ],
+  "deductions": []
+}
