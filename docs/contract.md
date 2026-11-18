@@ -449,3 +449,146 @@ With `N` total records across both input files: sorting and the heap/BIT
 operations take O(N log N) ⊂ O(N log²(2+N)) worst-case time; auxiliary space
 and the number of report entries are both O(N).  Integer arithmetic covers
 spans up to 10⁹ minutes and loads up to 20 000·1000 units without overflow.
+
+# League ticket close (league-ticket-close, independent report envelope)
+
+`league-ticket-close --source FILE --ticketing FILE --from-day L --to-day R
+--output REPORT` settles cross-fixture league ticket orders for one closing
+window `[L,R)`.  It is a standalone offline command: it never changes the
+source snapshot and its report envelope (`schema_version=1`,
+`source_sha256`, `ticketing_sha256`, `from_day`, `to_day`, `fixtures`,
+`entries`) is independent of every other envelope.  All validation is
+global over the complete snapshot; malformed input or I/O failure exits 2
+and preserves any previous report, success exits 0.
+
+## Inputs
+
+The `--source` file is the original trusted league snapshot under the same
+strict contract as league-table.  Ticket lines reference fixtures by id;
+pending and completed fixtures may both be referenced, and distinct
+fixtures between the same two teams are never merged — every amount is
+accounted per fixture id.
+
+The `--ticketing` file is the complete sales+refunds snapshot, strict JSON
+with the same 8 MB / duplicate-key / identifier rules and exactly two
+top-level arrays:
+
+* `sales` — `{"id","day","discount_cents","lines"}`.  Sale ids are unique.
+  `lines` is a non-empty array of `{"id","fixture","quantity",
+  "list_price_cents"}`; line ids are unique within their own order only.
+  `quantity` is an integer 1..1000000, `list_price_cents` 0..1000000 and
+  `discount_cents` an integer from 0 up to the order's pre-discount total.
+* `refunds` — `{"id","day","sale","line","first","stop"}`.  Refund ids are
+  unique.  `sale`/`line` reference the original order and line; `[first,
+  stop)` is the half-open ticket-number range with
+  `1 <= first < stop <= quantity+1`; the refund day must not precede its
+  sale day (same-day refunds are legal).
+
+Sales, total lines across all orders and refunds each hold at most 20000
+records.  `day`, `L` and `R` are integers in 0..1000000000 with `L < R`;
+amounts, quantities, ticket numbers and days reject booleans (and floats).
+Input array order never influences the business result.
+
+## Discount allocation and per-ticket net
+
+A line's pre-discount amount is `quantity * list_price_cents`.  The order
+discount is split across its lines proportionally to these amounts, exact
+to the cent: each line first receives the integer part of its exact share
+`discount * pre / total`; the remaining cents go one per line to the
+largest fractional remainders, ties broken by ascending line id.  The
+remainder is always smaller than the line count, so no line ever receives
+more than one extra cent.  When the order's pre-discount total is zero
+every line's discount is zero.
+
+A line's net (`pre - allocated discount`, always non-negative) is then
+distributed over its tickets: every ticket first receives the integer part
+`net // quantity`, and the `net % quantity` remaining cents go one each to
+the lowest ticket numbers.  Ticket `t` therefore carries `base + 1` cents
+for `t <= extra` and `base` otherwise, where `(base, extra) = divmod(net,
+quantity)`.
+
+## Refunds
+
+A refund selects a continuous ticket range of one original line; its
+amount is by definition the sum of the per-ticket nets of the selected
+tickets at sale time.  Across the complete input each ticket is refunded
+at most once — adjacent but disjoint ranges may be refunded separately,
+and free (zero-cent) tickets are protected exactly like paid ones.  The
+closing window only decides which records become entries of this period;
+it never narrows reference resolution or the duplicate-refund check, so
+records outside the window — before or after — are validated exactly like
+in-window ones, and an illegal record after the window still rejects the
+whole input.
+
+## Report
+
+```json
+{"schema_version": 1,
+ "source_sha256": "<sha256 of the source file bytes>",
+ "ticketing_sha256": "<sha256 of the ticketing file bytes>",
+ "from_day": 10,
+ "to_day": 20,
+ "fixtures": [
+   {"fixture": "m1", "opening_cents": 10, "sales_cents": 0,
+    "refunds_cents": 6, "closing_cents": 4}],
+ "entries": [
+   {"kind": "refund", "day": 10, "fixture": "m1", "sale": "s1",
+    "line": "lineA", "refund": "r1", "first": 2, "stop": 4,
+    "amount_cents": 6}]}
+```
+
+* `fixtures` — one row per source fixture id, ascending, including
+  all-zero rows.  `opening_cents` sums line nets of sales with `day < L`
+  minus refund amounts with `day < L`; `sales_cents`/`refunds_cents` sum
+  the non-negative in-window (`[L,R)`) amounts; `closing_cents =
+  opening + sales - refunds`.  Legal records with `day >= R` contribute
+  nothing.
+* `entries` — one row per in-window sale line `{kind:"sale", day, fixture,
+  sale, line, amount_cents}` and per in-window refund `{kind:"refund",
+  day, fixture, sale, line, refund, first, stop, amount_cents}`, including
+  zero amounts.  Refund entries carry the original order, line and ticket
+  range and are attributed to the original line's fixture even when the
+  sale happened before the window.  Ordering: business day, sales before
+  refunds, then sale id, line id and (refunds only) refund id, all
+  ascending.
+
+Each input file keeps its own byte-faithful digest; every other business
+structure is identical under input permutation.  The output must differ
+from both inputs after path resolution, symlink outputs are rejected, and
+publication reuses the atomic temp-file + `os.replace` publisher: any
+parse, validation or computation failure exits 2 and leaves a previous
+report exactly in place.
+
+## Compact representation: why per-ticket nets are refund-independent
+
+A single line may hold one million tickets, so the engine never expands
+per-ticket state.  Each line's per-ticket net is a two-step function fully
+described by `(quantity, base, extra)` — tickets `1..extra` carry
+`base + 1`, tickets `extra+1..quantity` carry `base` — and a range sum is
+the O(1) closed form
+
+    sum(first, stop) = (stop - first) * base
+                       + max(0, min(stop - 1, extra) - first + 1)
+
+This triple is derived once from the validated sale line (its net and
+quantity) before any refund is processed and is never mutated afterwards:
+refunds only read it.  A refund's amount is therefore anchored to the
+original sale alone and cannot be shifted by the presence, absence or
+ordering of other refunds.
+
+## Cross-period duplicate-refund verification
+
+Every refund range of the complete snapshot — regardless of business day —
+is grouped by `(sale, line)`, sorted, and any overlap (including a single
+shared ticket, paid or free) rejects the whole input before any report is
+produced.  Because the ticketing file is the complete sales+refunds
+snapshot and the window only filters report entries, a ticket refunded on
+an earlier business day and again inside the window appears twice in the
+file and is always caught; adjacent ranges that merely touch
+(`stop == first`) remain legal.
+
+With `S` sales, `L` lines and `R` refunds (each <= 20000), validation and
+aggregation take O((S+L+R) log(S+L+R)) time and O(S+L+R) space; the
+ticket-number axis (up to 10⁶ per line) and the day axis (up to 10⁹) are
+never materialized.  Integer arithmetic covers amounts up to
+20000·10⁶·10⁶ cents without overflow.

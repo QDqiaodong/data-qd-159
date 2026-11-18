@@ -19,6 +19,9 @@ python3 -m venv .venv
   --tie-break-profile fixtures/tie-break-profile.json --output run/tiebreak.json
 .venv/bin/league-venue-audit --source fixtures/venue-audit-source.json \
   --schedule fixtures/venue-audit-schedule.json --output run/venue-audit.json
+.venv/bin/league-ticket-close --source fixtures/ticket-close-source.json \
+  --ticketing fixtures/ticket-close-ticketing.json \
+  --from-day 10 --to-day 20 --output run/ticket-close.json
 .venv/bin/python -m unittest discover -s tests -v
 ```
 
@@ -36,7 +39,10 @@ reconciliation.py 实现可审计赛果观测对账，cli.py 衔接数据链路�
 SQLite 双时态持久化与单事务提交，cli.py 提供 init/apply/query。src/league_venue_audit 为
 场地容量审计：audit.py 是端点扫描线（最小堆维护有效容量、双 Fenwick 树一次扫描给出每笔
 预订的撤销减量），payloads.py 严格校验独立排期 JSON，cli.py 提供 league-venue-audit。
-fixtures 为明确自制样例，代码与样例采用MIT许可。
+src/league_ticket_close 为跨场次联票清分：payloads.py 严格校验完整销售与退款快照，
+close.py 是清分引擎（整单折扣按票项折前比例精确分至整分、票项实收按票号升序分配余分、
+(base,extra) 阶梯闭式表示不逐张展开、完整快照内按票项查重退票），cli.py 提供
+league-ticket-close。fixtures 为明确自制样例，代码与样例采用MIT许可。
 
 ## 业务与样例
 
@@ -167,3 +173,37 @@ O(N log²(2+N))、额外空间与报告条目 O(N)。超限是业务事实退出
 原原子发布保留旧报告，输出不得与任一输入同路径、符号链接拒绝。算法恒等式在测试中由独立
 逐分钟暴力实现对数百组随机实例交叉验证。完整字段、正确性论证与复杂度见
 [数据契约](docs/contract.md)。
+
+## 跨场次联票清分 league-ticket-close
+
+联赛运营方销售跨场次联票：订单可统一打折，结账仍按场次；退款可发生在销售期之后，财务
+按原票号复核当时实收，并防止同一张票在不同业务日重复退款。`--source` 沿用原联赛快照
+契约（待赛和完赛 fixture 均可引用，同一对球队的不同 fixture 不合账），`--ticketing`
+是精确含 `sales`/`refunds` 两个数组的完整销售与退款快照。
+
+整单折扣按各票项折前金额（张数×单价）比例精确分至整分：先取每项精确份额的整数部分，
+余分按余数降序、票项 ID 升序每项最多补 1 分；整单折前为 0 时各项折扣为 0。票项实收
+（折前减所分折扣）平均分到各张票，余分补给票号靠前者，由此确定每张票销售时的实收分。
+退款按原订单及票项引用半开票号段 `[first,stop)`，金额等于所选票号原实收之和，归原票项
+场次——即使原销售发生在结账窗口以前。完整快照内同一张票（含免费票）最多退一次，相邻
+不重叠票号段可分别退；窗口只决定分录归属，不缩小引用与重复退款校验范围，窗口外的非法
+记录同样整份拒绝。
+
+```sh
+# 验收样例：A 项 3 张、B 项 2 张、每张 4 分、整单折 3 分 → A 票号实收 4/3/3，B 为 4/3
+# 窗口前销售，窗口内退 A 票号 2..3 与 B 票号 1：m1 期初 10 退 6 期末 4，m2 期初 7 退 4 期末 3
+.venv/bin/league-ticket-close --source fixtures/ticket-close-source.json \
+  --ticketing fixtures/ticket-close-ticketing.json \
+  --from-day 10 --to-day 20 --output run/ticket-close.json
+# 追加一笔窗口前已退 A 票号 2 的记录（ID 不同）→ 整份拒绝，退出 2，保留旧报告
+.venv/bin/league-ticket-close --source fixtures/ticket-close-source.json \
+  --ticketing fixtures/ticket-close-ticketing-rejected.json \
+  --from-day 10 --to-day 20 --output run/ticket-close-rejected.json
+```
+
+报告精确含 `schema_version=1`、两份输入原字节摘要、`from_day`/`to_day`、按 fixture ID
+升序的 `fixtures`（期初=窗口前销售减退款、窗口内销售与退款、期末，原快照每个 fixture
+一行，无业务为零）与窗口内 `entries`（销售票项与退款票号段分录，零值保留，按业务日、
+销售先于退款、订单/票项/退款 ID 升序）。单个票项可达一百万张票，引擎用 `(base,extra)`
+阶梯闭式表示，计算与报告都不逐张展开。完整契约、紧凑表示为何使原票号实收不受其他退款
+影响、以及跨期不重退的验证方式见 [数据契约](docs/contract.md)。

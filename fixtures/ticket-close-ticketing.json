@@ -1,0 +1,41 @@
+{
+  "sales": [
+    {
+      "id": "s1",
+      "day": 5,
+      "discount_cents": 3,
+      "lines": [
+        {
+          "id": "lineA",
+          "fixture": "m1",
+          "quantity": 3,
+          "list_price_cents": 4
+        },
+        {
+          "id": "lineB",
+          "fixture": "m2",
+          "quantity": 2,
+          "list_price_cents": 4
+        }
+      ]
+    }
+  ],
+  "refunds": [
+    {
+      "id": "r1",
+      "day": 10,
+      "sale": "s1",
+      "line": "lineA",
+      "first": 2,
+      "stop": 4
+    },
+    {
+      "id": "r2",
+      "day": 10,
+      "sale": "s1",
+      "line": "lineB",
+      "first": 1,
+      "stop": 2
+    }
+  ]
+}

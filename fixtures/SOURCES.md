@@ -12,3 +12,6 @@
 - `history-batch2-rejected.json`：在 [15,28) 以两端均为 0:1 的 expected 改 1:1，因内部 pending 洞被整批拒绝。
 - `venue-audit-source.json`：场地容量审计源快照，m1 已完赛，m2/m3/m4 待赛。
 - `venue-audit-schedule.json`：验收排期，单场地默认容量 3，限制 [3,7)=2、[5,9)=1，预订 m2[0,8) 与 m3[2,6) 各 2 单位；超限总量 10，单独撤销减量 9 与 7。
+- `ticket-close-source.json`：联票清分源快照，m1 已完赛（完赛可引用），m2/m3 待赛，m3 无业务输出零行。
+- `ticket-close-ticketing.json`：清分验收销售与退款快照；订单 s1 第 5 日销售 lineA(m1,3 张)与 lineB(m2,2 张)、每张 4 分、整单折 3 分（A 票号实收 4/3/3，B 为 4/3），第 10 日退 A 票号 2..3 与 B 票号 1；窗口 [10,20) 下 m1 期初 10 退 6 期末 4，m2 期初 7 退 4 期末 3。
+- `ticket-close-ticketing-rejected.json`：追加重票退款 r3（第 7 日退 lineA 票号 2，与窗口内 r1 重叠），即使 ID 不同且在窗口之前也整份拒绝。
