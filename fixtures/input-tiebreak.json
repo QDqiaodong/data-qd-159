@@ -1,0 +1,35 @@
+{
+  "teams": [
+    "A",
+    "B",
+    "C",
+    "D",
+    "E"
+  ],
+  "fixtures": [
+    {"id": "g1",  "home": "A", "away": "B"},
+    {"id": "g2",  "home": "B", "away": "C"},
+    {"id": "g3",  "home": "C", "away": "D"},
+    {"id": "g4",  "home": "D", "away": "A"},
+    {"id": "g5",  "home": "A", "away": "C"},
+    {"id": "g6",  "home": "B", "away": "D"},
+    {"id": "e1",  "home": "A", "away": "E"},
+    {"id": "e2",  "home": "E", "away": "B"},
+    {"id": "e3",  "home": "C", "away": "E"},
+    {"id": "e4",  "home": "E", "away": "D"}
+  ],
+  "results": [
+    {"fixture": "g1", "home_goals": 3, "away_goals": 0},
+    {"fixture": "g2", "home_goals": 2, "away_goals": 0},
+    {"fixture": "g3", "home_goals": 1, "away_goals": 0},
+    {"fixture": "g4", "home_goals": 0, "away_goals": 2},
+    {"fixture": "g5", "home_goals": 1, "away_goals": 0},
+    {"fixture": "g6", "home_goals": 0, "away_goals": 1},
+    {"fixture": "e2", "home_goals": 0, "away_goals": 3},
+    {"fixture": "e3", "home_goals": 3, "away_goals": 0},
+    {"fixture": "e4", "home_goals": 0, "away_goals": 3}
+  ],
+  "deductions": [
+    {"team": "A", "points": 3, "reason": "synthetic rule breach"}
+  ]
+}

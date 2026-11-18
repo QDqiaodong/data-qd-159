@@ -5,11 +5,17 @@ from .common import read, save
 from .model import parse
 from .reconciliation import reconcile, validate
 from .standings import calculate
+from .tie_break import apply_tie_breaks, load_profile
 
-def run(source,observations=None):
+def run(source,observations=None,tie_break_profile=None):
     data,digest=read(source)
     teams,fixtures,results,deductions=parse(data)
     baseline=calculate(teams,fixtures,results,deductions)
+    if tie_break_profile is not None:
+        profile=load_profile(tie_break_profile)
+        result,audit=apply_tie_breaks(teams,fixtures,results,deductions,baseline,profile)
+        return {'schema_version':2,'source_sha256':digest,'result':result,
+                'tie_break_audit':audit}
     if observations is None:
         return {'schema_version':1,'source_sha256':digest,'result':baseline}
     payload,observations_digest=read(observations)
@@ -24,13 +30,17 @@ def main():
     parser=argparse.ArgumentParser(description=DESCRIPTION)
     parser.add_argument('--source',type=Path,required=True)
     parser.add_argument('--output',type=Path,required=True)
-    parser.add_argument('--observations',type=Path)
+    mode=parser.add_mutually_exclusive_group()
+    mode.add_argument('--observations',type=Path)
+    mode.add_argument('--tie-break-profile',type=Path)
     args=parser.parse_args()
     try:
-        inputs=[args.source] if args.observations is None else [args.source,args.observations]
+        inputs=[args.source]
+        if args.observations is not None:inputs.append(args.observations)
+        if args.tie_break_profile is not None:inputs.append(args.tie_break_profile)
         for path in inputs:
             if path.resolve()==args.output.resolve():raise ValueError('input and output must differ')
-        report=run(args.source,args.observations);save(args.output,report)
+        report=run(args.source,args.observations,args.tie_break_profile);save(args.output,report)
     except (ValueError,TypeError,KeyError,OSError,OverflowError,RecursionError) as error:
         print(str(error),file=sys.stderr);return 2
     print(json.dumps(report,sort_keys=True,ensure_ascii=False,allow_nan=False));return 0

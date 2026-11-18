@@ -81,6 +81,99 @@ Each file keeps its own byte digest. Output must differ from every input (source
 observations), symlink outputs are rejected, and publication is atomic; any parse,
 validation or computation failure exits 2 and leaves the previous report intact.
 
+# Head-to-head tie-break policy (schema v2, optional --tie-break-profile)
+`--tie-break-profile` is optional and mutually exclusive with `--observations`.
+Without either flag every invocation keeps schema_version=1, the same envelope
+`{schema_version, source_sha256, result}` and the same ranking behavior. Passing a
+profile produces schema_version=2 with an added `tie_break_audit`; the trusted
+fixtures, results, deductions and the fixed baseline accounting (`calculate`) are
+never rewritten, and source data bytes are not modified.
+
+## Profile file
+
+Strict JSON with the same 8 MB / duplicate-key / unknown-field / non-finite
+protections as every other JSON input. Exactly two top-level keys, each an
+ordered, non-empty array with no duplicates; only the supported fields
+`points`, `goal_difference` and `goals_for` are allowed, and no competition
+format is ever assumed implicitly:
+
+```json
+{"head_to_head":["points","goal_difference","goals_for"],
+ "overall":["goal_difference","goals_for"]}
+```
+
+* `head_to_head` — criteria evaluated on the mini-table of one tied group.
+* `overall` — global cumulative values from the fixed baseline, used only as
+  the terminal fallback after every head-to-head criterion has failed.
+
+## Tie-break semantics
+
+Total points, including the original deduction rule, stay the first ordering
+criterion; the profile only applies to groups of teams that finish level on
+total points. Deducted totals select the initial tied groups, and initial
+groups are processed in descending total-points order.
+
+For each tied group, the head-to-head mini-table uses only fixtures that (a)
+already carry a formal result and (b) have both sides inside the current
+group. Pending fixtures are never counted, and deductions are never applied a
+second time inside a mini-table. Multiple completed legs between the same two
+teams all count. Criteria are applied in declared profile order, descending:
+
+1. The first head-to-head criterion that splits the current group partitions
+   it; a criterion that leaves the group intact is skipped for the next one.
+2. Every still-tied subgroup restarts the whole procedure **from the first
+   head-to-head criterion**, recomputed on that subgroup's own restricted
+   fixture set. Recomputation can change the ordering relative to the parent
+   group's restricted rows, so parent values must never be reused.
+3. Only when no head-to-head criterion can split a group do the `overall`
+   fields apply in their declared order, using the global cumulative values.
+   Overall values are global, so each overall criterion is applied once; a
+   block that stays tied keeps a shared competition rank (1,1,3 gap rule).
+4. Team ids are never an athletic criterion. They only fix display order
+   inside a genuinely tied block, which is emitted with ascending team ids.
+
+## Report envelope (schema v2, policy mode)
+
+```json
+{"schema_version":2,
+ "source_sha256":"<sha256 of source bytes>",
+ "result":{"standings":[...],"pending_fixtures":[...],"completed":0},
+ "tie_break_audit":{
+   "profile":{"head_to_head":["points","goal_difference","goals_for"],
+              "overall":["goal_difference","goals_for"]},
+   "nodes":[
+     {"team_ids":["A","B","C","D"],
+      "fixture_ids":["g1","g2","g3","g4","g5","g6"],
+      "criterion_values":[
+        {"criterion":"points","source":"head_to_head",
+         "values":{"A":9,"B":3,"C":3,"D":3}},
+        {"criterion":"goal_difference","source":"head_to_head",
+         "values":{"A":6,"B":-2,"C":-2,"D":-2}},
+        {"criterion":"goals_for","source":"head_to_head",
+         "values":{"A":6,"B":2,"C":1,"D":1}},
+        {"criterion":"goal_difference","source":"overall",
+         "values":{"A":6,"B":1,"C":1,"D":1}},
+        {"criterion":"goals_for","source":"overall",
+         "values":{"A":6,"B":5,"C":4,"D":4}}],
+      "subgroups":[["A"],["B","C","D"]]}]}}
+```
+
+* `nodes` follow the initial tied-group order and then recurse depth-first;
+  every recursive subgroup that still contains at least two teams gets its
+  own node. When there is no tied group, `nodes` is `[]`.
+* Each node carries `team_ids` ascending, the actually-used in-group
+  `fixture_ids` ascending (pending fixtures excluded), `criterion_values` in
+  exact profile order with `head_to_head`/`overall` sources distinguished,
+  and `subgroups` in the final ranking order produced at that node.
+* Every numeric value is computed from the data set the node actually used:
+  head-to-head values from its own in-group completed fixtures, overall
+  values from the global baseline.
+* `result.standings` keeps the baseline rows' scalars; rows are re-ordered by
+  the resolved blocks and receive policy ranks, where each block occupies one
+  rank position and a block's rank is the position of its first team.
+* Input/output path rules, atomic publication and exit-2 preservation of an
+  existing report are identical to the other modes.
+
 ## Why the results are exact (no assignment enumeration)
 
 A maximum matching decides feasibility in O(E·sqrt(V)) time. It never enumerates

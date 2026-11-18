@@ -15,6 +15,8 @@ python3 -m venv .venv
 .venv/bin/league-table --source fixtures/input.json --output run/report.json
 .venv/bin/league-table --source fixtures/input-reconciliation.json \
   --observations fixtures/observations.json --output run/reconciliation.json
+.venv/bin/league-table --source fixtures/input-tiebreak.json \
+  --tie-break-profile fixtures/tie-break-profile.json --output run/tiebreak.json
 .venv/bin/python -m unittest discover -s tests -v
 ```
 
@@ -63,6 +65,38 @@ status="infeasible"、不导入任何观测、result 保持该 source 的基线�
 对账模式报告 schema_version=2，保留 source_sha256 与 result，增加按观测文件原始字节
 计算的 observations_sha256 及 reconciliation；不带 --observations 时仍是 schema_version=1
 的旧包络。字段、边界与全局可行性/证书正确性说明见 [数据契约](docs/contract.md)。
+
+## 头对头排名分析（可选 --tie-break-profile）
+
+`--tie-break-profile` 与 `--observations` 互斥；不传任何可选参数时，schema_version=1
+报告与原排名行为完全不变。profile 为严格 JSON，精确含两个有序、非空、无重复的数组，
+字段仅支持 points/goal_difference/goals_for，禁止隐式假定赛制：
+
+```json
+{"head_to_head":["points","goal_difference","goals_for"],
+ "overall":["goal_difference","goals_for"]}
+```
+
+含扣分后的总积分仍是第一排序准则，profile 只作用于总积分相同的球队组。头对头小表
+只取该组双方都在组内且已完赛的正式 fixture（pending 不计、扣分不重复计算，多轮交锋
+全部计入），按 profile 顺序降序拆分；首个能拆分的准则生效后，每个仍并列的子组从首条
+头对头准则在自己的受限 fixture 集上重新计算——重算可能改变沿用父组受限行所得次序。
+头对头准则均无法拆分时，才按 overall 字段顺序用全局累计值回退；最终仍相同者保留共享
+competition rank（1,1,3 留空规则），展示按球队 ID 升序，球队 ID 从不作为竞技准则。
+
+```sh
+# 五队样例：A/B/C/D 同 6 分，首轮头对头积分拆出 {A}；子组 {B,C,D} 重算净胜球
+# 得到 B>D>C（沿用父组受限行则三者净胜球同为 -2 无法拆分），e1 待赛不计入
+.venv/bin/league-table --source fixtures/input-tiebreak.json \
+  --tie-break-profile fixtures/tie-break-profile.json --output run/tiebreak.json
+```
+
+政策模式报告为 schema_version=2，保留 source_sha256 与 result，并增加 tie_break_audit：
+按初始总积分并列组顺序输出审计节点，递归子组各自单独记录；每节点含升序 team_ids、
+实际使用的组内 fixture_ids、按 profile 顺序且区分 head_to_head/overall 来源的
+criterion_values，以及按最终排名排列的 subgroups；无并列组时 nodes 为空。profile 非法
+（未知/重复字段、空准则、多余键、重复 JSON 键等）退出 2 并保留已有报告。完整字段与
+递归语义见 [数据契约](docs/contract.md)。
 
 ## 离线赛果历史仓 league-history（init/apply/query）
 
