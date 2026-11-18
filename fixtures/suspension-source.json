@@ -1,0 +1,47 @@
+{
+  "teams": [
+    "A",
+    "B",
+    "C"
+  ],
+  "fixtures": [
+    {
+      "id": "m1",
+      "home": "A",
+      "away": "C"
+    },
+    {
+      "id": "m2",
+      "home": "A",
+      "away": "C"
+    },
+    {
+      "id": "m3",
+      "home": "B",
+      "away": "C"
+    },
+    {
+      "id": "m4",
+      "home": "B",
+      "away": "C"
+    }
+  ],
+  "results": [
+    {
+      "fixture": "m1",
+      "home_goals": 2,
+      "away_goals": 0
+    },
+    {
+      "fixture": "m3",
+      "home_goals": 1,
+      "away_goals": 1
+    },
+    {
+      "fixture": "m4",
+      "home_goals": 0,
+      "away_goals": 1
+    }
+  ],
+  "deductions": []
+}

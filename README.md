@@ -22,6 +22,8 @@ python3 -m venv .venv
 .venv/bin/league-ticket-close --source fixtures/ticket-close-source.json \
   --ticketing fixtures/ticket-close-ticketing.json \
   --from-day 10 --to-day 20 --output run/ticket-close.json
+.venv/bin/league-suspension --source fixtures/suspension-source.json \
+  --discipline fixtures/suspension-discipline.json --output run/suspension.json
 .venv/bin/python -m unittest discover -s tests -v
 ```
 
@@ -44,6 +46,40 @@ close.py 是清分引擎（整单折扣按票项折前比例精确分至整分�
 (base,extra) 阶梯闭式表示不逐张展开、完整快照内按票项查重退票），cli.py 提供
 league-ticket-close。fixtures 为明确自制样例，代码与样例采用MIT许可。
 
+## 球员停赛核算 league-suspension
+
+`league-suspension --source FILE --discipline FILE --output REPORT` 在固定联赛快照与
+纪律快照之间核对停赛执行：注册变更、案件签发与撤销在指定序号开赛前生效，逐案维护
+尚欠场数；停赛余额随球员转会，撤销只免除指定案件的剩余场数并保留其已服记录。
+`--source` 仍是原 `teams`/`fixtures`/`results`/`deductions` 契约，比分、积分扣罚与
+纪律数据互不回写；只有正式 `results` 中的场次算完赛，待赛不消耗余额。
+
+完赛场次开赛前，注册于参赛球队且仍欠停赛的球员：出现在实际出场名单中记一条
+`violation`（归该球员最早尚欠案件，不抵扣），未出场则在最早尚欠案件抵扣一场
+（`served`）。最早尚欠案件按 `(签发 seq, case_id)` 升序（ID 按 Unicode 码点）；
+同序号先注册、再签发与撤销、最后判比赛。报告含两份输入原字节 SHA-256、按
+`(seq,fixture,player)` 排序的 `events` 与按 `case_id` 排序的 `cases`
+（恒有 `imposed=served+waived+remaining`）。违规是业务发现，退出 0；非法输入退出 2
+并保留旧报告。
+
+```sh
+# 验收样例：x 停2场，seq1 服1场；seq3 转 B 后出场记 x 违规不抵扣；
+# seq4 前撤销 x（免除1场），seq4 未出场抵扣 y 1 场
+.venv/bin/league-suspension --source fixtures/suspension-source.json \
+  --discipline fixtures/suspension-discipline.json --output run/suspension.json
+# 出场球员 r 在 seq3 已解除注册：非法引用，退出2且不创建报告
+.venv/bin/league-suspension --source fixtures/suspension-source.json \
+  --discipline fixtures/suspension-discipline-rejected.json \
+  --output run/suspension-rejected.json
+```
+
+引擎不展开无事件序号，也不按场次遍历全部球员：决策行按序号分桶，每球员的尚欠案件
+放在 `(签发seq,case_id)` 堆中惰性弹出，每队维护“注册且仍有余额”的球员集，只在
+注册/签发/撤销/清零时同步；一场比赛只触达本队出场名单与两队余额集合。时间
+`O(N log N + R log R)`、空间 `O(N + R)`（N 为纪律输入行数，R 为报告行数）。
+测试中的独立逐场暴力重放与 60 组随机实例交叉验证引擎，
+`fixtures/suspension-report.golden.json` 锁定可重跑样例的逐字节输出。完整契约、
+正确性论证与复杂度见 [数据契约](docs/contract.md)。
 ## 业务与样例
 
 # League standings v1

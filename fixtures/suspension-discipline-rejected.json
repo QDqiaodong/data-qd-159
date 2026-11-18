@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "players": [
+    "p",
+    "q",
+    "r"
+  ],
+  "fixture_order": [
+    {"fixture": "m1", "seq": 1},
+    {"fixture": "m2", "seq": 2},
+    {"fixture": "m3", "seq": 3},
+    {"fixture": "m4", "seq": 4}
+  ],
+  "registrations": [
+    {"player": "p", "team": "A", "seq": 1},
+    {"player": "p", "team": "B", "seq": 3},
+    {"player": "q", "team": "C", "seq": 1},
+    {"player": "r", "team": "A", "seq": 1},
+    {"player": "r", "team": null, "seq": 2}
+  ],
+  "issues": [
+    {"case_id": "x", "player": "p", "seq": 1, "games": 2},
+    {"case_id": "y", "player": "p", "seq": 3, "games": 2}
+  ],
+  "revocations": [
+    {"case_id": "x", "seq": 4}
+  ],
+  "appearances": [
+    {"fixture": "m1", "players": ["q"]},
+    {"fixture": "m3", "players": ["p", "q", "r"]},
+    {"fixture": "m4", "players": ["q"]}
+  ]
+}

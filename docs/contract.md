@@ -592,3 +592,154 @@ aggregation take O((S+L+R) log(S+L+R)) time and O(S+L+R) space; the
 ticket-number axis (up to 10⁶ per line) and the day axis (up to 10⁹) are
 never materialized.  Integer arithmetic covers amounts up to
 20000·10⁶·10⁶ cents without overflow.
+
+# League suspension accounting (league-suspension, independent report envelope)
+
+`league-suspension --source FILE --discipline FILE --output REPORT` explains
+which case a transferred player served in which fixture, and when a player
+with an open balance took the pitch.  It is a standalone offline command:
+the `--source` file is parsed through the unchanged league-table contract
+(`teams`, `fixtures`, `results`, `deductions`), standings and deduction
+rules are never recomputed or rewritten, and the report envelope
+(`schema_version=1`, `source_sha256`, `discipline_sha256`, `events`,
+`cases`) is independent of every other envelope.  A suspension violation
+is a business finding and exits 0; only malformed input exits 2.
+
+## Inputs
+
+The source snapshot keeps its existing strict contract.  Fixture identity
+and the two participating teams come exclusively from the formal
+`fixtures` rows (`id`, `home`, `away`); a fixture counts as completed iff
+a formal `results` row exists for that id.  Scores and points deductions
+never influence suspension rules, and discipline data is never written
+back into results.
+
+The independent `--discipline` file is strict JSON with the same 8 MB,
+duplicate-key, unknown-field, non-finite-number and identifier rules, and
+exactly these six top-level fields:
+
+* `schema_version` — the integer `1`.
+* `players` — known player ids, at most 50 000, unique.
+* `fixture_order` — `{"fixture","seq"}` rows; every formal fixture id
+  (pending fixtures included) appears exactly once.  Distinct fixtures may
+  share a sequence number, but one team plays at most one fixture on any
+  sequence number, pending fixtures included.
+* `registrations` — `{"player","team","seq"}` rows, at most 100 000.
+  Players start unregistered.  A known team id sets the registration
+  (replacing any prior one); `null` deregisters.  At most one
+  registration row per player per sequence.
+* `issues` — `{"case_id","player","seq","games"}` rows, at most 100 000.
+  `case_id` is globally unique and `games` is an integer 1..100000
+  (booleans rejected).  A case may be imposed on a known player who is
+  currently unregistered.
+* `revocations` — `{"case_id","seq"}` rows, at most 100 000, each
+  targeting an issued case at a strictly later sequence, at most once per
+  case.  Revoking a fully served case is legal and waives zero games.
+* `appearances` — `{"fixture","players"}` rows, exactly one per formally
+  completed fixture (an empty array means nobody actually played) and
+  none for pending fixtures.  `players` is the merged id list of everyone
+  who actually took the pitch for either side (nominees who never play are
+  excluded), unique within the fixture.  Every appearing player must be
+  registered at kick-off to one of that fixture's two teams; this is
+  checked even for players with no open balance.
+
+All sequences are integers in 1..1000000000 and need not be contiguous;
+registrations, issuances and revocations may land on sequences without a
+fixture and after the last fixture.  Input array order never denotes
+effect order.  Every player, team, fixture and case reference must be
+valid.
+
+## Ordered replay and per-case accounting
+
+Rows are replayed in ascending sequence number.  Within one sequence the
+order is fixed:
+
+1. registration changes;
+2. case issuances and revocations (decisions on different cases at the
+   same sequence never interfere);
+3. fixture judgments, only after every decision above has settled.
+
+Each case keeps its own `imposed / served / waived / remaining` counters.
+A revocation moves the case's current `remaining` into `waived` and keeps
+its `served` history, so serving records are never erased.  Balances are
+attached to the player, not the team: a transfer (or a deregistration
+followed by re-registration) moves the outstanding cases unchanged.
+Unregistered players and players who take no part in any completed
+fixture of a sequence consume nothing, and pending fixtures consume
+nothing — later completed fixtures always judge against the balances left
+by every prior per-case service and revocation.
+
+For a formally completed fixture, among players registered to a
+participating team at kick-off:
+
+* a player who appears in the line-up while owing a balance records one
+  `violation` attributed to the earliest outstanding case, and **no**
+  balance is deducted;
+* a player who does not appear and still owes a balance serves one game
+  against the earliest outstanding case, decrementing its `remaining` and
+  incrementing its `served`.
+
+The earliest outstanding case of a player is the minimum by
+`(issued_seq, case_id)`, excluding served-out and revoked cases; id
+ordering is the Unicode code-point order of the strings.  One completed
+fixture produces at most one event per player.
+
+## Report
+
+```json
+{"schema_version": 1,
+ "source_sha256": "<sha256 of the source file bytes>",
+ "discipline_sha256": "<sha256 of the discipline file bytes>",
+ "events": [
+   {"seq": 1, "fixture": "m1", "team": "A", "player": "p",
+    "case_id": "x", "kind": "served"}],
+ "cases": [
+   {"case_id": "x", "player": "p", "issued_seq": 1,
+    "revoked_seq": 4, "imposed": 2, "served": 1,
+    "waived": 1, "remaining": 0}]}
+```
+
+* `events` — `{"seq","fixture","team","player","case_id","kind"}` rows
+  where `team` is the player's kick-off registration and `kind` is
+  `served` or `violation`, sorted by `(seq, fixture, player)`.
+* `cases` — one row per issued case, including cases with no accounting
+  event, sorted by `case_id`; `revoked_seq` is `null` when the case was
+  never revoked.  Every row satisfies
+  `imposed = served + waived + remaining` with non-negative counters.
+
+Each input file keeps its own byte-faithful digest.  Identical input
+bytes produce identical report bytes; permuting input arrays changes
+nothing except the discipline digest.  The output must differ from both
+inputs after path resolution, symlink outputs are rejected, and
+publication reuses the atomic temp-file + `os.replace` publisher: any
+parse, validation or computation failure exits 2 and leaves a previous
+report exactly in place.
+
+## How affected fixtures and players are located
+
+The engine never expands empty sequences and never scans the full player
+population per fixture.  During one indexing pass every registration,
+issuance, revocation and completed fixture is filed under its sequence
+number, so the sweep visits only sequence numbers that carry work.
+
+Per player, outstanding cases live in a heap keyed by
+`(issued_seq, case_id)`; finished or revoked entries are popped lazily
+when the earliest outstanding case is queried, which gives contract order
+without re-sorting.  Per team, a membership set names exactly the
+registered players who currently have an active balance.  The set is
+re-synced only at the points that can change membership — a registration
+change, an issuance, a revocation, or a service that zeroes a case — so
+balances can follow a player across transfers while stale team sets are
+never read.  A fixture then touches only its own line-up plus the two
+participating teams' membership sets.
+
+## Complexity
+
+Let `N` be the total number of discipline input rows (players, ordering,
+registrations, issues, revocations, appearances) and `R` the number of
+report rows (`events` plus one row per issued case).  Indexing and the
+sequence sweep are linear in the rows, heap and set operations cost
+`O(log N)` amortized, and final sorting costs `O(R log R)`; overall time
+is `O(N log N + R log R)` and space is `O(N + R)`.  The sequence axis
+(up to 10⁹), never-issued events and players with no balance are never
+materialized.

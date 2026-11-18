@@ -1,0 +1,53 @@
+{
+  "cases": [
+    {
+      "case_id": "x",
+      "imposed": 2,
+      "issued_seq": 1,
+      "player": "p",
+      "remaining": 0,
+      "revoked_seq": 4,
+      "served": 1,
+      "waived": 1
+    },
+    {
+      "case_id": "y",
+      "imposed": 2,
+      "issued_seq": 3,
+      "player": "p",
+      "remaining": 1,
+      "revoked_seq": null,
+      "served": 1,
+      "waived": 0
+    }
+  ],
+  "discipline_sha256": "6517d7dfc1be8b8989168e4b872b5ad29091ba1d53513a471235723694700ec0",
+  "events": [
+    {
+      "case_id": "x",
+      "fixture": "m1",
+      "kind": "served",
+      "player": "p",
+      "seq": 1,
+      "team": "A"
+    },
+    {
+      "case_id": "x",
+      "fixture": "m3",
+      "kind": "violation",
+      "player": "p",
+      "seq": 3,
+      "team": "B"
+    },
+    {
+      "case_id": "y",
+      "fixture": "m4",
+      "kind": "served",
+      "player": "p",
+      "seq": 4,
+      "team": "B"
+    }
+  ],
+  "schema_version": 1,
+  "source_sha256": "77fe11b9de7e6e97868b8836e3c8256ce24dea22f65b9da90c0bffae23fbb4d6"
+}
